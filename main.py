@@ -3,9 +3,8 @@ import matplotlib.patches as patches
 from PIL import Image
 import torch
 from transformers import AutoProcessor, AutoModelForCausalLM
-import cv2
+
 import numpy as np
-import random
 import argparse # Import argparse
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -40,54 +39,34 @@ def plot_bbox(
     text_color=(0, 0, 0),
     text_padding=5
 ):
-    if len(image.shape) == 2:
-        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    original_h, original_w, _ = image.shape
+    
+    dpi = 100
+    fig, ax = plt.subplots(figsize=(original_w / dpi, original_h / dpi), dpi=dpi)
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    ax.imshow(image)
 
-    image_copy = image.copy()
-
-    image_rgb = cv2.cvtColor(image_copy, cv2.COLOR_BGR2RGB)
-
-    fig, ax = plt.subplots()
-    ax.imshow(image_rgb)
-
-    # draw bbox
     for idx, bbox in enumerate(bboxes):
         x_min, y_min, x_max, y_max = map(int, bbox)
         width = x_max - x_min
         height = y_max - y_min
-
-        color_rgb = (1, 0, 0) # Red color for bbox
-
+        color_rgb = (1, 0, 0)
         rect = patches.Rectangle(
-            (x_min, y_min),
-            width,
-            height,
-            linewidth=thickness,
-            edgecolor=color_rgb,
-            facecolor='none'
+            (x_min, y_min), width, height,
+            linewidth=thickness, edgecolor=color_rgb, facecolor='none'
         )
         ax.add_patch(rect)
-
-        label_text = f"Object {idx+1}"
-        if labels and idx < len(labels):
-            label_text = labels[idx]
-
+        label_text = labels[idx] if labels and idx < len(labels) else f"Object {idx+1}"
         ax.text(
-            x_min + text_padding,
-            y_min - text_padding,
-            label_text,
-            fontsize=font_scale * 10,
-            color='white',
-            bbox=dict(facecolor=color_rgb, alpha=0.5, pad=text_padding),
+            x_min + text_padding, y_min - text_padding, label_text,
+            fontsize=font_scale * 10, color='white',
+            bbox=dict(facecolor=color_rgb, alpha=0.5, pad=text_padding)
         )
 
     ax.axis('off')
-    fig.canvas.draw()
-    img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
-    img = img.reshape(fig.canvas.get_width_height()[::-1] + (4,))
-    plt.close(fig)
 
-    return Image.fromarray(img).convert("RGB")
+    plt.show()
+    plt.close(fig)
 
 
 if __name__ == '__main__':
@@ -104,9 +83,8 @@ if __name__ == '__main__':
 
     pil_image = Image.open('image.jpg')
     
-    # Convert PIL image to numpy array (BGR for cv2) for plot_bbox
-    numpy_image = np.array(pil_image)
-    bgr_image = cv2.cvtColor(numpy_image, cv2.COLOR_RGB2BGR)
+    # Convert PIL image to RGB NumPy array for matplotlib
+    numpy_image_rgb = np.array(pil_image.convert('RGB'))
 
     annotated_image = None
     text_to_display = None
@@ -115,15 +93,20 @@ if __name__ == '__main__':
         task_prompt = '<CAPTION>'
         result = run_example(task_prompt=task_prompt, pil_image=pil_image)
         text_to_display = result[task_prompt]
-        annotated_image = pil_image
-        print(f"Caption: {text_to_display}")
+        fig, ax = plt.subplots(1)
+        ax.imshow(numpy_image_rgb)
+        ax.set_axis_off()
+
+        if text_to_display:
+            fig.text(0.5, 0.05, text_to_display, ha='center', fontsize=12, wrap=True)
+            plt.subplots_adjust(bottom=0.2)
 
     elif args.task == 'od':
         task_prompt = '<OD>'
         result = run_example(task_prompt=task_prompt, pil_image=pil_image)
         bboxes = result['<OD>']['bboxes']
         labels = result['<OD>']['labels']
-        annotated_image = plot_bbox(bgr_image, bboxes, labels)
+        plot_bbox(numpy_image_rgb, bboxes, labels)
         print(f"Object Detection Labels: {labels}")
 
     elif args.task == 'rp':
@@ -132,7 +115,7 @@ if __name__ == '__main__':
         bboxes = result['<REGION_PROPOSAL>']['bboxes']
 
         labels = [f"Region {i+1}" for i in range(len(bboxes))] 
-        annotated_image = plot_bbox(bgr_image, bboxes, labels)
+        plot_bbox(numpy_image_rgb, bboxes, labels)
         print(f"Region Proposal BBoxes: {bboxes}")
 
     elif args.task == 'ov-od':
@@ -143,7 +126,7 @@ if __name__ == '__main__':
         result = run_example(task_prompt=task_prompt, text_input=args.text_input, pil_image=pil_image)
         bboxes = result['<OPEN_VOCABULARY_DETECTION>']['bboxes']
         labels = result['<OPEN_VOCABULARY_DETECTION>']['bboxes_labels']
-        annotated_image = plot_bbox(bgr_image, bboxes, labels)
+        plot_bbox(numpy_image_rgb, bboxes, labels)
         text_to_display = f"Query: {args.text_input}"
         print(f"Open-Vocabulary Detection Labels: {labels}")
 
@@ -163,16 +146,8 @@ if __name__ == '__main__':
         result = run_example(task_prompt=task_prompt, text_input=text_input_for_grounding, pil_image=pil_image)
         bboxes = result['<CAPTION_TO_PHRASE_GROUNDING>']['bboxes']
         labels = result['<CAPTION_TO_PHRASE_GROUNDING>']['labels']
-        annotated_image = plot_bbox(bgr_image, bboxes, labels)
+        plot_bbox(numpy_image_rgb, bboxes, labels)
         text_to_display = f"Caption: {text_input_for_grounding}"
 
-    if annotated_image is not None:
-        fig, ax = plt.subplots(1)
-        ax.imshow(annotated_image)
-        ax.set_axis_off()
-
-        if text_to_display:
-            fig.text(0.5, 0.05, text_to_display, ha='center', fontsize=12, wrap=True)
-            plt.subplots_adjust(bottom=0.2)
-
-        plt.savefig('a.png')
+    print(text_to_display)
+    plt.show()
